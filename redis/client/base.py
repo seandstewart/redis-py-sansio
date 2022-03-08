@@ -165,7 +165,7 @@ class PipelineMixin:
         )
         # We'll only bind to an explicit connection if we've called WATCH
         if self.connection:
-            return self.connection.execute_pipelien(stack)
+            return self.connection.execute_pipeline(stack)
         return self.connection_pool.execute_pipeline(stack)
 
     def discard(self):
