@@ -3,10 +3,10 @@
 ## What is this?
 
 This repository was inspired by [Sans-IO Python](https://sans-io.readthedocs.io/) as 
-an attempt to implement an event-based backed for reading and writing bytes which 
+an attempt to implement an event-based backend for reading and writing bytes which 
 conform to the Redis Client/Server Protocol.
 
-As our community evolves to work with both varied IO implementations, we need to 
+As our community evolves to work with varied IO implementations, we need to 
 re-approach our client libraries in a way which will ease the maintenance burden for 
 duel support. This respository is meant to serve as a starting point for creating a 
 more robust, maintainable Python client for Redis.
