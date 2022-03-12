@@ -3,16 +3,23 @@ name = "redis-sansio"
 version = "0.1.0"
 description = ""
 authors = ["Sean Stewart <sean_stewart@me.com>"]
+packages = [{include = "sansredis"}]
+readme = "Readme.md"
 
 [tool.poetry.dependencies]
 python = "^3.7"
 async-timeout = "^4.0.2"
-aioredis = "1.3.1"
 uvloop = "^0.16.0"
 attrs = "^21.4.0"
 
 [tool.poetry.dev-dependencies]
 yappi = "^1.3.3"
+aioredis = "1.3.1"
+aredis = "^1.1.8"
+pytest = "^7.0.1"
+pytest-benchmark = {extras = ["histogram"], version = "^3.4.1"}
+pytest-asyncio = "^0.18.2"
+redis = {version = "^4.1.4", allow-prereleases = true}
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
