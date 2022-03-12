@@ -1,0 +1,11 @@
+version: 3
+services:
+  redis:
+    image: redis:6.2-alpine
+    ports:
+    - 6379:6379
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
