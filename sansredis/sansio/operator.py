@@ -49,6 +49,18 @@ class RedisOperator(Generic[ResponseBodyT]):
         """Feed received bytes to the parser for un-packing."""
         self._reader.feed(data)
 
+    def __next__(self):
+        res = self._reader.gets()
+        if res is self._sentinel:
+            raise StopIteration()
+        return res
+
+    def read_next_response(self, event: events.PackedCommand):
+        response = next(self, ...)
+        while response is ...:
+            response = next(self, ...)
+        return self.read_response(event.command, response)
+
     def iterparse(self) -> Iterable:
         """Iterate over the responses un-packed from received data."""
         empty = self._sentinel

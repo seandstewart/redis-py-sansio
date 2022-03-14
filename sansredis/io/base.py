@@ -419,7 +419,7 @@ class BaseIORedisConnection(Generic[_RT]):
     def check_health(self):
         raise NotImplementedError()
 
-    def read_response(self, future) -> _RT:
+    def read_response(self, *args, **kwargs) -> _RT:
         """Wait for the response from the server.
 
         Args:

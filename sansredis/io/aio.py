@@ -309,7 +309,7 @@ class AsyncIORedisConnection(
             self.protocol.set_next_health_check(loop.time())
 
     async def read_response(
-        self, future: asyncio.Future
+        self, future: asyncio.Future, *, timeout: float = ..., raise_on_timeout: bool = True
     ) -> events.Response | events.PipelinedResponses:
         """Wait for the response from the server.
 
@@ -324,11 +324,15 @@ class AsyncIORedisConnection(
             :py::class:`~redis.sansio.exceptions.InvalidResponse`
             :py::class:`~redis.sansio.exceptions.ResponseError`
         """
+        if timeout is ...:
+            timeout = self.protocol.socket_info.timeout
         try:
-            async with async_timeout.timeout(self.protocol.socket_info.timeout):
+            async with async_timeout.timeout(timeout):
                 response = await future
         except asyncio.TimeoutError:
-            raise exceptions.RedisTimeoutError("Timed out waiting for response.")
+            if raise_on_timeout:
+                raise exceptions.RedisTimeoutError("Timed out waiting for response.")
+            return None
         if isinstance(response, Exception):
             raise response from None
         return response

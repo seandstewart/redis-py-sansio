@@ -180,6 +180,8 @@ class SyncIORedisConnection(base.BaseIORedisConnection[types.ResponseBodyT]):
     request<->response lifecycle for a Redis Client and Server.
     """
 
+    _ioprotocol: RedisSyncIOProtocol
+
     def __init__(self, *, protocol: protocol.SansIORedisProtocol = None):
         super().__init__(
             protocol=protocol,
@@ -198,12 +200,11 @@ class SyncIORedisConnection(base.BaseIORedisConnection[types.ResponseBodyT]):
         self.disconnect()
 
     def read_response(
-        self, future: futures.Future
+        self, *, timeout: float = ..., raise_on_timeout: bool = True
     ) -> events.Response | events.PipelinedResponses:
-        try:
-            response = future.result(timeout=self.protocol.socket_info.timeout)
-        except futures.TimeoutError:
-            raise exceptions.RedisTimeoutError("Timed out waiting for response.")
+        response = self._ioprotocol.read_response(
+            timeout=timeout, raise_on_timeout=raise_on_timeout
+        )
         if isinstance(response, Exception):
             raise response from None
         return response
@@ -263,8 +264,8 @@ class SyncIORedisConnection(base.BaseIORedisConnection[types.ResponseBodyT]):
         # This must happen first to enable further interactions with the server.
         if init:
             try:
-                iresponse = self.send_command(event=init)
-                return iresponse
+                self.send_command(event=init)
+                self.read_response()
             except exceptions.AuthenticationError as e:
                 raise e from None
             except exceptions.ResponseError as e:
@@ -272,6 +273,7 @@ class SyncIORedisConnection(base.BaseIORedisConnection[types.ResponseBodyT]):
         if stack:
             try:
                 self.send_command(event=stack)
+                self.read_response()
             except exceptions.ResponseError as e:
                 raise self.protocol.connection_error(e) from e
 
@@ -308,13 +310,13 @@ class SyncIORedisConnection(base.BaseIORedisConnection[types.ResponseBodyT]):
             self.protocol.set_next_health_check(time.monotonic())
 
     def _do_send_and_read_pipeline(self, event: events.PackedCommand) -> _RT:
-        fut = self.send_command(event)
-        response = self.read_response(fut)
+        self.send_command(event)
+        response = self.read_response()
         return response.replies
 
     def _do_send_and_read_command(self, event: events.PackedCommand) -> _RT:
-        fut = self.send_command(event)
-        response = self.read_response(fut)
+        self.send_command(event)
+        response = self.read_response()
         return response.reply
 
 
@@ -329,7 +331,6 @@ class RedisSyncIOProtocol:
         "_conn_waiter",
         "_data_waiter",
         "_disconnect_waiter",
-        "_reader",
     )
 
     def __init__(
@@ -345,7 +346,6 @@ class RedisSyncIOProtocol:
         self._conn_waiter: threading.Event = threading.Event()
         self._data_waiter: threading.Condition = threading.Condition()
         self._disconnect_waiter: threading.Event = threading.Event()
-        self._reader: futures.ThreadPoolExecutor | None = None
 
     @property
     def is_connected(self):
@@ -355,8 +355,6 @@ class RedisSyncIOProtocol:
         self.proto.configure_socket(transport)
         self._transport = transport
         self._state = _State.connected
-        self._reader = futures.ThreadPoolExecutor(max_workers=1)
-        self._reader.submit(self.read_forever)
         self._conn_waiter.set()
 
     def wait_connected(self) -> None:
@@ -366,12 +364,10 @@ class RedisSyncIOProtocol:
     def wait_disconnected(self):
         self._disconnect_waiter.wait()
 
-    def send_command(self, event: events.PackedCommand) -> futures.Future:
+    def send_command(self, event: events.PackedCommand):
         if self._state == _State.connected:
-            future = futures.Future()
             self._transport.sendall(event.payload)
-            self._waiters.append((event.command, future))
-            return future
+            self._waiters.append(event)
 
         elif self._state == _State.not_connected:
             raise ConnectionError(
@@ -385,23 +381,6 @@ class RedisSyncIOProtocol:
                     f"Got an unknown error while sending command: {event.command}."
                 )
             raise exc
-
-    def read_forever(self):
-        """Read from the socket in a loop.
-
-        This is intended to be scheduled in a separate thread from the main client.
-        """
-        # Make sure the connection is set up.
-        self.wait_connected()
-        while True:
-            # See if there's any data on the socket and pass to the parser.
-            has_data = self._read_from_socket(raise_on_timeout=False)
-            if has_data:
-                # If we've passed to the parser,
-                #   read the responses and pipe them into the waiting Futures.
-                self._read_response()
-            # Sleep this thread so we can context-switch.
-            time.sleep(0)
 
     def _read_from_socket(
         self, timeout: float = ..., raise_on_timeout: bool = True
@@ -443,20 +422,18 @@ class RedisSyncIOProtocol:
             if timeout is ... and self._state == _State.connected:
                 self._transport.settimeout(self.proto.socket_info.timeout)
 
-    def _read_response(self) -> NoReturn:
+    def read_response(self, *, timeout: float = ..., raise_on_timeout: bool = True):
         if self._state != _State.connected or not self._waiters:
             return
+        self._read_from_socket(timeout=timeout, raise_on_timeout=raise_on_timeout)
         _get_waiter = self._get_waiter
-        read = self.operator.read_response
-        for parsed in self.operator.iterparse():
-            item = _get_waiter()
-            if item is None:
-                continue
-            cmd, fut = item
-            response = read(cmd, parsed)
-            fut.set_result(response)
+        event = _get_waiter()
+        while event is None:
+            event = _get_waiter()
+        response = self.operator.read_next_response(event)
+        return response
 
-    def _get_waiter(self) -> tuple[events.Command, futures.Future] | None:
+    def _get_waiter(self) -> events.PackedCommand | None:
         try:
             item = self._waiters.popleft()
             return item
@@ -478,7 +455,6 @@ class RedisSyncIOProtocol:
             self._state = _State.not_connected
             self._set_exception(exc)
 
-        self._reader.shutdown(wait=True)
         self._disconnect_waiter.set()
 
     def _set_exception(self, exc):
